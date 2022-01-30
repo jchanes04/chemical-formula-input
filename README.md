@@ -2,7 +2,6 @@
 
 ## TODO
 
-- Arrow/backspace with modifier keys
 - Better scrolling of overflowing text
 - Styling/settings
 - Chemical formula substitutions/formatting
