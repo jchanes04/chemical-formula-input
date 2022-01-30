@@ -8,9 +8,11 @@
 - Chemical formula substitutions/formatting
 - Cursor movement controls
 - Accessibility
+- Mobile/cross-browser testing
 
 ## Planned Settings
 
 - Cursor component
 - Normal/subscript/superscript text component
 - Symbol dictionary (what to convert to what, what to automatically super/subscript, etc.)
+- Selection color
