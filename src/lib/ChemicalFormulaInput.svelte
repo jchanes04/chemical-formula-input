@@ -5,10 +5,19 @@
     let textareaElement: HTMLTextAreaElement
     let inputElement: HTMLElement
     let cursorElement: HTMLElement
+    let selectionElement: HTMLElement
     
+    let inputFocused = false
+
     let cursorPosition = 0
     let selectionStartPosition = null
-    let blinkTimeout
+
+    let dragSelecting = false
+    let mouseDown = false
+    let selectionMeasuringElements: [HTMLElement, HTMLElement] | [] = []
+    let selectionMeasuringXCoords: [number, number] | [] = []
+    let cursorXCoord: number = null
+    let blinkTimeout    
 
     let content = ""
     $: leftContent = selectionStartPosition !== null
@@ -30,30 +39,49 @@
         })
     }
 
+    function handleBlur() {
+        inputFocused = false
+        setTimeout(async () => {
+            await tick()
+            if (!inputFocused) {
+                deselectText()
+            }
+        })
+    }
+
     function deselectText() {
-        cursorPosition = Math.max(selectionStartPosition, cursorPosition)
         selectionStartPosition = null
     }
 
+    function handleFocus() {
+        if (!mouseDown) {
+            switchFocus()
+        }
+    }
+
     async function switchFocus() {
-        selectionStartPosition = null
-
-        setTimeout(() => {
-            const selection = document.getSelection()
-            if (selection.anchorOffset === selection.focusOffset) {
+        inputFocused = true
+        return new Promise((res) => {
+            setTimeout(() => {
+                const selection = document.getSelection()
                 const parent = selection.anchorNode?.parentElement
-                if (parent?.classList.contains("left")) {
-                    cursorPosition = selection.anchorOffset
-                } else if (parent?.classList.contains("right")) {
-                    cursorPosition = leftContent.length + selection.anchorOffset
+                if (selection.anchorOffset === selection.focusOffset) {
+                    if (parent?.classList.contains("left")) {
+                        cursorPosition = selection.anchorOffset
+                    } else if (parent?.classList.contains("right")) {
+                        cursorPosition = leftContent.length + selection.anchorOffset + (selectedContent ? selectedContent.length : 0)
+                    } else if (parent?.classList.contains("selection")) {
+                        cursorPosition = leftContent.length + selection.anchorOffset
+                    }
                 }
-            }
 
-            restartBlink()
+                restartBlink()
 
-            inputElement.blur()
-            textareaElement.focus()
-        }, 0)
+                inputElement.blur()
+                textareaElement.focus()
+                res(true)
+            })
+        })
     }
 
     const handleInput = (async function(e: InputEvent) {
@@ -178,6 +206,13 @@
         }
     }
 
+    function handleDblclick() {
+        const leftWords = leftContent.split(/[^a-zA-Z0-9:_']+/)
+        const rightWords = rightContent.split(/[^a-zA-Z0-9:_']+/)
+        selectionStartPosition = cursorPosition - leftWords.at(-1).length
+        cursorPosition = cursorPosition + rightWords[0].length
+    }
+
     async function restartBlink() {
         clearTimeout(blinkTimeout)
         if (cursorElement) cursorElement.classList.remove('blinking')
@@ -186,13 +221,59 @@
             if (cursorElement) cursorElement.classList.add('blinking')
         }, 50)
     }
+
+    async function handleMousedown() {
+        mouseDown = true
+        setTimeout(async () => {
+            await switchFocus()
+            selectionStartPosition = cursorPosition
+
+            window.addEventListener('mousemove', handleMousemove)
+            window.addEventListener('mouseup', handleMouseup)
+        })
+    }
+
+    async function handleMousemove(e: MouseEvent) {
+        dragSelecting = true
+        await tick()
+        selectionMeasuringXCoords = [selectionMeasuringElements[0].getBoundingClientRect().left, selectionMeasuringElements[1].getBoundingClientRect().left]
+        cursorXCoord = selectedContent
+            ? cursorPosition > selectionStartPosition
+                ? selectionElement.getBoundingClientRect().right
+                : selectionElement.getBoundingClientRect().left
+            : cursorElement.getBoundingClientRect().left
+        if (e.clientX - selectionMeasuringXCoords[0] < cursorXCoord - e.clientX && cursorPosition > 0) {
+            cursorPosition--
+        } else if (selectionMeasuringXCoords[1] - e.clientX < e.clientX - cursorXCoord && cursorPosition <= content.length) {
+            cursorPosition++
+        }
+    }
+
+    function handleMouseup() {
+        window.removeEventListener('mousemove', handleMousemove)
+        window.removeEventListener('mouseup', handleMouseup)
+
+        dragSelecting = false
+        selectionMeasuringXCoords = []
+        if (selectionStartPosition === cursorPosition) {
+            selectionStartPosition = null
+        }
+    }
 </script>
 
 <div class="chemical-formula-input">
-    <textarea tabindex={-1} autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"
-        bind:this={textareaElement} on:input={handleInput} on:keydown={handleKeydown} on:blur={deselectText} bind:value={textareaValue} />
-    <div class="input-box" on:focus={switchFocus} bind:this={inputElement} contenteditable>
-        {#if selectedContent}
+    <textarea tabindex={-1} autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" bind:this={textareaElement}
+        on:input={handleInput} on:keydown={handleKeydown} on:blur={handleBlur} bind:value={textareaValue} />
+    <div class="input-box" on:focus={handleFocus} on:dblclick={handleDblclick} on:mousedown={handleMousedown} bind:this={inputElement} contenteditable>
+        {#if dragSelecting && selectedContent}
+            {#if selectionStartPosition < cursorPosition}
+                <span class="left">{leftContent}</span><span class="selection">{selectedContent.slice(0, -1)}</span><span class="selection-measuring left" bind:this={selectionMeasuringElements[0]} /><span class="selection" bind:this={selectionElement}>{selectedContent.slice(-1)}</span><span class="right">{rightContent.slice(0, 1)}</span><span class="selection-measuring right" bind:this={selectionMeasuringElements[1]} /><span class="right">{rightContent.slice(1)}</span>
+            {:else if selectionStartPosition > cursorPosition}
+                <span class="left">{leftContent.slice(0, -1)}</span><span class="selection-measuring left" bind:this={selectionMeasuringElements[0]} /><span class="left">{leftContent.slice(-1)}</span><span class="selection" bind:this={selectionElement}>{selectedContent.slice(0, 1)}</span><span class="selection-measuring right" bind:this={selectionMeasuringElements[1]} /><span class="selection">{selectedContent.slice(1)}</span><span class="right">{rightContent}</span>
+            {/if}
+        {:else if dragSelecting}
+            <span class="left">{leftContent.slice(0, -1)}</span><span class="selection-measuring left" bind:this={selectionMeasuringElements[0]} /><span class="left">{leftContent.slice(-1)}</span><span class="cursor blinking" contenteditable="false" bind:this={cursorElement}></span><span class="right">{rightContent.slice(0, 1)}</span><span class="selection-measuring right" bind:this={selectionMeasuringElements[1]} /><span class="right">{rightContent.slice(1)}</span>
+        {:else if selectedContent}
             <span class="left">{leftContent}</span><span class="selection">{selectedContent}</span><span class="right">{rightContent}</span>
         {:else}
             <span class="left">{leftContent}</span><span class="cursor blinking" contenteditable="false" bind:this={cursorElement}></span><span class="right">{rightContent}</span>
@@ -209,12 +290,21 @@
         overflow-x: auto;
         font-size: 40px;
         caret-color: transparent;
+
+        ::selection {
+            background-color: transparent;
+        }
+
+        ::-moz-selection {
+            background-color: transparent;
+        }
     }
 
     textarea {
-        // position: absolute;
-        // opacity: 0;
+        position: absolute;
+        opacity: 0;
         pointer-events: none;
+        resize: none;
     }
 
     textarea:focus ~ .input-box {
@@ -237,6 +327,15 @@
 
     .selection {
         background-color: #9cc3f5;
+    }
+
+    .selection-measuring {
+        display: inline-block;
+        width: 1px;
+        height: 0.5em;
+        margin-right: -1px;
+        background: transparent;
+        pointer-events: none;
     }
 
     :global(.blinking) {
